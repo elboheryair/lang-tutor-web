@@ -1,12 +1,29 @@
 import { AuthenticatedPageFallback } from "@/components/authenticated-page-fallback";
+import { LanguageSelector } from "@/components/language-selector";
 import { requireUser } from "@/lib/auth/require-user";
+import {
+  getLearningLanguage,
+  isLearningLanguageCode,
+  type LearningLanguageCode,
+} from "@/lib/languages";
 import { getProfileForUser } from "@/lib/profiles";
 import { Suspense } from "react";
+
+function resolveInitialLanguage(
+  stored: string | null | undefined,
+): LearningLanguageCode | null {
+  if (!stored || !isLearningLanguageCode(stored)) return null;
+  return stored;
+}
 
 async function DashboardContent() {
   const user = await requireUser();
   const profile = await getProfileForUser(user.id);
   const nickname = profile?.nickname ?? user.email?.split("@")[0] ?? "there";
+  const initialLanguageCode = resolveInitialLanguage(
+    profile?.selected_language,
+  );
+  const activeLanguage = getLearningLanguage(initialLanguageCode);
 
   return (
     <>
@@ -14,9 +31,11 @@ async function DashboardContent() {
         Hi, {nickname}
       </h1>
       <p className="mt-4 max-w-xl text-lg leading-relaxed text-zinc-400">
-        Welcome back. Use the menu to update your profile or sign out when you are
-        done.
+        {activeLanguage
+          ? `You're set up to learn ${activeLanguage.name}. Switch languages anytime below.`
+          : "Welcome back. Choose a learning language to get started."}
       </p>
+      <LanguageSelector initialLanguageCode={initialLanguageCode} />
     </>
   );
 }
