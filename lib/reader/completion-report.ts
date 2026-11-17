@@ -7,6 +7,8 @@ export type StoredCompletionReport = {
   totalLines?: number;
   totalWords?: number;
   uniqueWordsRecorded?: number;
+  /** Local calendar date (YYYY-MM-DD) when completed_sessions was counted in analytics. */
+  analyticsCompletionDate?: string;
 };
 
 export function buildStoredCompletionReport(
@@ -113,6 +115,14 @@ export function parseStoredCompletionReport(
     uniqueWordsRecorded >= 0
   ) {
     parsed.uniqueWordsRecorded = Math.floor(uniqueWordsRecorded);
+  }
+
+  const analyticsCompletionDate = record.analyticsCompletionDate;
+  if (
+    typeof analyticsCompletionDate === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(analyticsCompletionDate)
+  ) {
+    parsed.analyticsCompletionDate = analyticsCompletionDate;
   }
 
   return parsed;

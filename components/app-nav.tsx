@@ -8,6 +8,7 @@ import { SignOutButton } from "@/components/sign-out-button";
 const links = [
   { href: "/dashboard", label: "Home" },
   { href: "/learn/source", label: "Sources" },
+  { href: "/analytics", label: "Analytics" },
   { href: "/profile", label: "Edit profile" },
 ] as const;
 

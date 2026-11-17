@@ -1,11 +1,14 @@
 "use client";
 
+import { recordSessionCompleted } from "@/app/(authenticated)/analytics/actions";
 import {
   completeDocumentSession,
   continueDocumentAfterCompletion,
   saveReaderStylePreferences,
   saveReadingPosition,
 } from "@/app/(authenticated)/learn/reader/actions";
+import { localActivityDate } from "@/lib/analytics/activity-date";
+import { useReaderDailySync } from "@/lib/analytics/use-reader-daily-sync";
 import {
   buildStoredCompletionReport,
   type StoredCompletionReport,
@@ -31,6 +34,7 @@ import {
 } from "@/lib/reader/style-preferences";
 import type { DisplayMode, HighlightOptions, ReaderTheme } from "@/lib/reader/types";
 import { useRouter } from "next/navigation";
+import { reportCountsAsCompletedInAnalytics } from "@/lib/analytics/completion-session";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ReaderViewProps = {
@@ -80,6 +84,13 @@ export function ReaderView({
   const stylePrefsInitializedRef = useRef(false);
   const currentLineRef = useRef(0);
   const [readyDocumentId, setReadyDocumentId] = useState<string | null>(null);
+  const [completionCountedInAnalytics, setCompletionCountedInAnalytics] =
+    useState(() =>
+      reportCountsAsCompletedInAnalytics(
+        initialCompletionReport,
+        initialPosition,
+      ),
+    );
 
   useEffect(() => {
     currentLineRef.current = currentLineIndex;
@@ -97,6 +108,22 @@ export function ReaderView({
 
   const sessionTimerActive =
     !sessionPaused && !exitOpen && !completionOpen;
+
+  const analyticsEnabled =
+    readyDocumentId === documentId &&
+    lines.length > 0 &&
+    !completionOpen &&
+    initialCompletionReport == null;
+
+  const { flush: flushDailyAnalytics } = useReaderDailySync({
+    documentId,
+    languageCode,
+    lines,
+    currentLineIndex,
+    uniqueRecordedLines,
+    sessionSeconds,
+    enabled: analyticsEnabled,
+  });
 
   const completionStats = useMemo(
     () =>
@@ -155,11 +182,13 @@ export function ReaderView({
       );
       setSessionSeconds(initialCompletionReport.sessionSeconds);
       setCompletionOpen(true);
+      setCompletionCountedInAnalytics(true);
     } else {
       setCurrentLineIndex(lineIndexFromWordProgress(initialPosition, lines));
       setSessionSeconds(0);
       setCompletionOpen(false);
       setUniqueRecordedLines(new Set());
+      setCompletionCountedInAnalytics(false);
     }
 
     setSessionPaused(false);
@@ -220,6 +249,7 @@ export function ReaderView({
     setCompletionOpen(false);
     const percent = wordProgressPercent(lines, currentLineRef.current);
     await continueDocumentAfterCompletion(documentId, percent);
+    setCompletionCountedInAnalytics(false);
     setSessionSeconds(0);
     setUniqueRecordedLines(new Set());
   }, [documentId, lines]);
@@ -238,6 +268,7 @@ export function ReaderView({
           setCompletionOpen(false);
           const percent = wordProgressPercent(lines, nextIndex);
           await continueDocumentAfterCompletion(documentId, percent);
+          setCompletionCountedInAnalytics(false);
           setSessionSeconds(0);
           setUniqueRecordedLines(new Set());
           setCurrentLineIndex(nextIndex);
@@ -295,9 +326,10 @@ export function ReaderView({
   const openRecord = useCallback(() => setRecordOpen(true), []);
 
   const leaveToSources = useCallback(async () => {
+    await flushDailyAnalytics();
     await flushProgress();
     router.push("/learn/source");
-  }, [flushProgress, router]);
+  }, [flushDailyAnalytics, flushProgress, router]);
 
   useReaderKeyboardShortcuts({
     enabled: !modalBlocking,
@@ -390,11 +422,20 @@ export function ReaderView({
         }}
         onGoToSources={async () => {
           if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-          const report = buildStoredCompletionReport(
-            uniqueRecordedLines,
-            completionStats,
-          );
-          await completeDocumentSession(documentId, report);
+          await flushDailyAnalytics();
+          if (!completionCountedInAnalytics) {
+            const activityDate = localActivityDate();
+            const report = {
+              ...buildStoredCompletionReport(
+                uniqueRecordedLines,
+                completionStats,
+              ),
+              analyticsCompletionDate: activityDate,
+            };
+            await completeDocumentSession(documentId, report);
+            await recordSessionCompleted(languageCode, activityDate);
+            setCompletionCountedInAnalytics(true);
+          }
           setCompletionOpen(false);
           router.push("/learn/source");
         }}

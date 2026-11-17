@@ -3,8 +3,11 @@
 import { isValidLearningLanguageForStyles } from "@/lib/reader/style-preferences";
 import type { ReaderStylePreferences } from "@/lib/reader/style-preferences";
 import { upsertReaderStylePreferences } from "@/lib/reader-style-preferences";
+import { completionCountedActivityDate } from "@/lib/analytics/completion-session";
+import { incrementDailyReadingStats } from "@/lib/analytics/daily-stats";
 import type { StoredCompletionReport } from "@/lib/reader/completion-report";
 import {
+  getUserDocument,
   markDocumentSessionComplete,
   resumeDocumentAfterCompletion,
   updateDocumentLastPosition,
@@ -86,5 +89,32 @@ export async function continueDocumentAfterCompletion(
     redirect("/");
   }
 
-  return resumeDocumentAfterCompletion(user.id, documentId, lastPosition);
+  const document = await getUserDocument(user.id, documentId);
+  if (!document) {
+    return { ok: false, error: "Session not found." };
+  }
+
+  const countedDate = completionCountedActivityDate(document);
+
+  const result = await resumeDocumentAfterCompletion(
+    user.id,
+    documentId,
+    lastPosition,
+  );
+
+  if (!result.ok || countedDate == null) {
+    return result;
+  }
+
+  await incrementDailyReadingStats(document.language, {
+    activityDate: countedDate,
+    linesRead: 0,
+    linesRecorded: 0,
+    wordsRead: 0,
+    wordsRecorded: 0,
+    practiceSeconds: 0,
+    completedSessions: -1,
+  });
+
+  return result;
 }
