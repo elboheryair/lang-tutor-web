@@ -1,6 +1,15 @@
 "use client";
 
-import { saveReadingPosition } from "@/app/(authenticated)/learn/reader/actions";
+import {
+  completeDocumentSession,
+  continueDocumentAfterCompletion,
+  saveReaderStylePreferences,
+  saveReadingPosition,
+} from "@/app/(authenticated)/learn/reader/actions";
+import {
+  buildStoredCompletionReport,
+  type StoredCompletionReport,
+} from "@/lib/reader/completion-report";
 import { CompletionDialog } from "@/components/learn/reader/completion-dialog";
 import { ExitConfirmDialog } from "@/components/learn/reader/exit-confirm-dialog";
 import { ReaderRemote } from "@/components/learn/reader/reader-remote";
@@ -11,17 +20,16 @@ import { RecordLineDialog } from "@/components/learn/reader/record-line-dialog";
 import { buildSessionRecordingStats } from "@/lib/reader/recording-stats";
 import { formatSessionTime } from "@/lib/reader/time";
 import {
-  lineIndexFromProgress,
+  lineIndexFromWordProgress,
   splitContentIntoLines,
   wordProgressPercent,
 } from "@/lib/reader/text";
 import { useReaderKeyboardShortcuts } from "@/lib/reader/use-reader-keyboard-shortcuts";
 import {
-  DEFAULT_HIGHLIGHT_OPTIONS,
-  type DisplayMode,
-  type HighlightOptions,
-  type ReaderTheme,
-} from "@/lib/reader/types";
+  clampReaderFontSize,
+  type ReaderStylePreferences,
+} from "@/lib/reader/style-preferences";
+import type { DisplayMode, HighlightOptions, ReaderTheme } from "@/lib/reader/types";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -30,31 +38,34 @@ type ReaderViewProps = {
   title: string;
   content: string;
   initialPosition: number;
+  initialCompletionReport: StoredCompletionReport | null;
   languageName: string;
+  languageCode: string;
+  initialStylePreferences: ReaderStylePreferences;
 };
-
-const MIN_FONT = 14;
-const MAX_FONT = 32;
-
-function clampFont(size: number): number {
-  return Math.min(MAX_FONT, Math.max(MIN_FONT, Math.round(size) || MIN_FONT));
-}
 
 export function ReaderView({
   documentId,
   title,
   content,
   initialPosition,
+  initialCompletionReport,
   languageName,
+  languageCode,
+  initialStylePreferences,
 }: ReaderViewProps) {
   const router = useRouter();
   const lines = useMemo(() => splitContentIntoLines(content), [content]);
-  const [theme, setTheme] = useState<ReaderTheme>("dark");
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("full");
-  const [highlightOptions, setHighlightOptions] = useState<HighlightOptions>(
-    DEFAULT_HIGHLIGHT_OPTIONS,
+  const [theme, setTheme] = useState<ReaderTheme>(
+    initialStylePreferences.theme,
   );
-  const [fontSize, setFontSize] = useState(18);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>(
+    initialStylePreferences.displayMode,
+  );
+  const [highlightOptions, setHighlightOptions] = useState<HighlightOptions>(
+    initialStylePreferences.highlightOptions,
+  );
+  const [fontSize, setFontSize] = useState(initialStylePreferences.fontSize);
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [sessionPaused, setSessionPaused] = useState(false);
@@ -64,18 +75,20 @@ export function ReaderView({
   const [uniqueRecordedLines, setUniqueRecordedLines] = useState<Set<number>>(
     () => new Set(),
   );
-  const [recordAttemptsByLine, setRecordAttemptsByLine] = useState<
-    Record<number, number>
-  >({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initializedRef = useRef(false);
+  const styleSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stylePrefsInitializedRef = useRef(false);
   const currentLineRef = useRef(0);
+  const [readyDocumentId, setReadyDocumentId] = useState<string | null>(null);
 
   useEffect(() => {
     currentLineRef.current = currentLineIndex;
   }, [currentLineIndex]);
 
-  const progressPercent = wordProgressPercent(lines, currentLineIndex);
+  const progressPercent = useMemo(() => {
+    if (completionOpen) return 100;
+    return wordProgressPercent(lines, currentLineIndex);
+  }, [lines, currentLineIndex, completionOpen]);
   const modalBlocking = recordOpen || exitOpen || completionOpen;
   const textObscured =
     recordOpen || sessionPaused || exitOpen || completionOpen;
@@ -87,13 +100,8 @@ export function ReaderView({
 
   const completionStats = useMemo(
     () =>
-      buildSessionRecordingStats(
-        lines,
-        uniqueRecordedLines,
-        recordAttemptsByLine,
-        sessionSeconds,
-      ),
-    [lines, uniqueRecordedLines, recordAttemptsByLine, sessionSeconds],
+      buildSessionRecordingStats(lines, uniqueRecordedLines, sessionSeconds),
+    [lines, uniqueRecordedLines, sessionSeconds],
   );
 
   const themeClasses = useMemo(
@@ -130,14 +138,69 @@ export function ReaderView({
   }, [documentId, progressPercent]);
 
   useEffect(() => {
-    if (initializedRef.current || lines.length === 0) return;
-    initializedRef.current = true;
-    setCurrentLineIndex(lineIndexFromProgress(initialPosition, lines.length));
-  }, [initialPosition, lines.length]);
+    if (lines.length === 0) return;
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const reopeningCompleted =
+      initialCompletionReport != null && initialPosition >= 100;
+
+    if (reopeningCompleted) {
+      setCurrentLineIndex(Math.max(0, lines.length - 1));
+      setUniqueRecordedLines(
+        new Set(initialCompletionReport.uniqueLineIndices),
+      );
+      setSessionSeconds(initialCompletionReport.sessionSeconds);
+      setCompletionOpen(true);
+    } else {
+      setCurrentLineIndex(lineIndexFromWordProgress(initialPosition, lines));
+      setSessionSeconds(0);
+      setCompletionOpen(false);
+      setUniqueRecordedLines(new Set());
+    }
+
+    setSessionPaused(false);
+    setRecordOpen(false);
+    setExitOpen(false);
+    setReadyDocumentId(documentId);
+  }, [documentId, initialPosition, initialCompletionReport, lines.length]);
 
   useEffect(() => {
+    if (readyDocumentId !== documentId) return;
     persistProgress(progressPercent);
-  }, [progressPercent, persistProgress]);
+  }, [progressPercent, persistProgress, documentId, readyDocumentId]);
+
+  useEffect(() => {
+    if (!stylePrefsInitializedRef.current) {
+      stylePrefsInitializedRef.current = true;
+      return;
+    }
+
+    if (styleSaveTimerRef.current) clearTimeout(styleSaveTimerRef.current);
+    styleSaveTimerRef.current = setTimeout(() => {
+      void saveReaderStylePreferences(languageCode, {
+        fontSize,
+        displayMode,
+        highlightOptions,
+        theme,
+      });
+    }, 500);
+
+    return () => {
+      if (styleSaveTimerRef.current) clearTimeout(styleSaveTimerRef.current);
+    };
+  }, [
+    languageCode,
+    fontSize,
+    displayMode,
+    highlightOptions.highlightCurrent,
+    highlightOptions.dullRest,
+    highlightOptions.boldCurrent,
+    theme,
+  ]);
 
   useEffect(() => {
     if (!sessionTimerActive) return;
@@ -148,8 +211,18 @@ export function ReaderView({
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (styleSaveTimerRef.current) clearTimeout(styleSaveTimerRef.current);
     };
   }, []);
+
+  const resumePracticeFromModal = useCallback(async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setCompletionOpen(false);
+    const percent = wordProgressPercent(lines, currentLineRef.current);
+    await continueDocumentAfterCompletion(documentId, percent);
+    setSessionSeconds(0);
+    setUniqueRecordedLines(new Set());
+  }, [documentId, lines]);
 
   const showCompletion = useCallback(() => {
     setCompletionOpen(true);
@@ -158,11 +231,22 @@ export function ReaderView({
   const goToLine = useCallback(
     (index: number) => {
       if (lines.length === 0) return;
-      setCurrentLineIndex(
-        Math.min(lines.length - 1, Math.max(0, index)),
-      );
+      const nextIndex = Math.min(lines.length - 1, Math.max(0, index));
+      if (completionOpen) {
+        void (async () => {
+          if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+          setCompletionOpen(false);
+          const percent = wordProgressPercent(lines, nextIndex);
+          await continueDocumentAfterCompletion(documentId, percent);
+          setSessionSeconds(0);
+          setUniqueRecordedLines(new Set());
+          setCurrentLineIndex(nextIndex);
+        })();
+        return;
+      }
+      setCurrentLineIndex(nextIndex);
     },
-    [lines.length],
+    [completionOpen, documentId, lines],
   );
 
   const tryAdvanceLine = useCallback(() => {
@@ -181,10 +265,6 @@ export function ReaderView({
       next.add(lineIndex);
       return next;
     });
-    setRecordAttemptsByLine((prev) => ({
-      ...prev,
-      [lineIndex]: (prev[lineIndex] ?? 0) + 1,
-    }));
   }, []);
 
   const handleRecordYes = useCallback(() => {
@@ -205,11 +285,11 @@ export function ReaderView({
   const requestExit = useCallback(() => setExitOpen(true), []);
 
   const decreaseFont = useCallback(() => {
-    setFontSize((size) => clampFont(size - 1));
+    setFontSize((size) => clampReaderFontSize(size - 1));
   }, []);
 
   const increaseFont = useCallback(() => {
-    setFontSize((size) => clampFont(size + 1));
+    setFontSize((size) => clampReaderFontSize(size + 1));
   }, []);
 
   const openRecord = useCallback(() => setRecordOpen(true), []);
@@ -217,11 +297,6 @@ export function ReaderView({
   const leaveToSources = useCallback(async () => {
     await flushProgress();
     router.push("/learn/source");
-  }, [flushProgress, router]);
-
-  const leaveToHome = useCallback(async () => {
-    await flushProgress();
-    router.push("/dashboard");
   }, [flushProgress, router]);
 
   useReaderKeyboardShortcuts({
@@ -259,7 +334,7 @@ export function ReaderView({
           }
           onDisplayModeChange={setDisplayMode}
           onHighlightOptionsChange={setHighlightOptions}
-          onFontSizeChange={(size) => setFontSize(clampFont(size))}
+          onFontSizeChange={(size) => setFontSize(clampReaderFontSize(size))}
         />
       </div>
 
@@ -310,14 +385,18 @@ export function ReaderView({
       <CompletionDialog
         open={completionOpen}
         stats={completionStats}
-        onContinueReading={() => setCompletionOpen(false)}
-        onLeaveSession={async () => {
-          setCompletionOpen(false);
-          await leaveToSources();
+        onContinueReading={() => {
+          void resumePracticeFromModal();
         }}
-        onGoHome={async () => {
+        onGoToSources={async () => {
+          if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+          const report = buildStoredCompletionReport(
+            uniqueRecordedLines,
+            completionStats,
+          );
+          await completeDocumentSession(documentId, report);
           setCompletionOpen(false);
-          await leaveToHome();
+          router.push("/learn/source");
         }}
       />
     </div>

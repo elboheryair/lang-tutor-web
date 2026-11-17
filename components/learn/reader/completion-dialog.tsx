@@ -4,58 +4,46 @@ import { READER_SHORTCUTS } from "@/lib/reader/shortcuts";
 import { ShortcutTooltip } from "@/components/learn/reader/shortcut-tooltip";
 import { useEffect, useRef, useState } from "react";
 
+import { SessionCompletionSummary } from "@/components/learn/session-completion-summary";
 import type { SessionRecordingStats } from "@/lib/reader/recording-stats";
-import { formatSessionTime } from "@/lib/reader/time";
 
 type CompletionDialogProps = {
   open: boolean;
   stats: SessionRecordingStats;
-  onLeaveSession: () => void;
-  onGoHome: () => void;
+  onGoToSources: () => void;
   onContinueReading: () => void;
 };
 
-const ACTIONS = ["leave", "home", "continue"] as const;
+const ACTIONS = ["sources", "continue"] as const;
 
 export function CompletionDialog({
   open,
   stats,
-  onLeaveSession,
-  onGoHome,
+  onGoToSources,
   onContinueReading,
 }: CompletionDialogProps) {
   const [activeIndex, setActiveIndex] = useState(0);
-  const leaveRef = useRef<HTMLButtonElement>(null);
-  const homeRef = useRef<HTMLButtonElement>(null);
+  const sourcesRef = useRef<HTMLButtonElement>(null);
   const continueRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setActiveIndex(0);
-    leaveRef.current?.focus();
+    sourcesRef.current?.focus();
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        setActiveIndex(
-          (index) => (index - 1 + ACTIONS.length) % ACTIONS.length,
-        );
-        return;
-      }
-      if (event.key === "ArrowRight") {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
         setActiveIndex((index) => (index + 1) % ACTIONS.length);
         return;
       }
       if (event.key === "Enter") {
         event.preventDefault();
-        const action = ACTIONS[activeIndex];
-        if (action === "leave") onLeaveSession();
-        else if (action === "home") onGoHome();
+        if (ACTIONS[activeIndex] === "sources") onGoToSources();
         else onContinueReading();
         return;
       }
@@ -67,12 +55,11 @@ export function CompletionDialog({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, activeIndex, onLeaveSession, onGoHome, onContinueReading]);
+  }, [open, activeIndex, onGoToSources, onContinueReading]);
 
   useEffect(() => {
     if (!open) return;
-    if (activeIndex === 0) leaveRef.current?.focus();
-    else if (activeIndex === 1) homeRef.current?.focus();
+    if (activeIndex === 0) sourcesRef.current?.focus();
     else continueRef.current?.focus();
   }, [activeIndex, open]);
 
@@ -99,65 +86,29 @@ export function CompletionDialog({
           You finished this text!
         </h2>
         <p className="mt-3 text-sm text-zinc-300">
-          Congratulations — you reached the end. Your progress is saved.
+          Congratulations — you reached the end. Your progress is saved. Go back
+          to your sources to pick another text, or keep practicing this one.
         </p>
-        <dl className="mt-4 space-y-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-400">Lines recorded (unique)</dt>
-            <dd className="tabular-nums font-medium text-white">
-              {stats.uniqueLinesRecorded} / {stats.totalLines}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-400">Words recorded (unique)</dt>
-            <dd className="tabular-nums font-medium text-white">
-              {stats.uniqueWordsRecorded} / {stats.totalWords}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-400">Practice recordings (session)</dt>
-            <dd className="tabular-nums text-zinc-300">
-              {stats.totalPracticeRecordings}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-zinc-400">Time in session</dt>
-            <dd className="tabular-nums font-medium text-white">
-              {formatSessionTime(stats.sessionSeconds)}
-            </dd>
-          </div>
-        </dl>
+        <SessionCompletionSummary stats={stats} className="mt-4" />
         <p className="mt-3 text-xs text-zinc-500">
-          Each line and word counts once in the summary above, even if you
-          recorded it multiple times. Leave the session, go home, or keep
-          practicing.
+          Each line and word counts once when you record it successfully.{" "}
+          {READER_SHORTCUTS.modalMove} to choose,{" "}
+          {READER_SHORTCUTS.modalConfirm} to confirm, Esc to keep reading.
         </p>
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <div className="mt-6 flex flex-wrap gap-2">
           <ShortcutTooltip
-            label="Leave session"
+            label="Go to sources"
             shortcut={READER_SHORTCUTS.modalConfirm}
           >
             <button
-              ref={leaveRef}
+              ref={sourcesRef}
               type="button"
-              onClick={onLeaveSession}
-              className={`rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 ${
+              onClick={onGoToSources}
+              className={`rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 ${
                 activeIndex === 0 ? focusRing : ""
               }`}
             >
-              Leave session
-            </button>
-          </ShortcutTooltip>
-          <ShortcutTooltip label="Homepage" shortcut={READER_SHORTCUTS.modalConfirm}>
-            <button
-              ref={homeRef}
-              type="button"
-              onClick={onGoHome}
-              className={`rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 ${
-                activeIndex === 1 ? focusRing : ""
-              }`}
-            >
-              Go to homepage
+              Yes, go to sources
             </button>
           </ShortcutTooltip>
           <ShortcutTooltip label="Continue reading" shortcut="Esc">
@@ -166,10 +117,10 @@ export function CompletionDialog({
               type="button"
               onClick={onContinueReading}
               className={`rounded-xl border border-white/20 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-white/5 ${
-                activeIndex === 2 ? focusRing : ""
+                activeIndex === 1 ? focusRing : ""
               }`}
             >
-              Continue reading
+              No, keep practicing
             </button>
           </ShortcutTooltip>
         </div>

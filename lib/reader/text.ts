@@ -22,6 +22,7 @@ export function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/** Words in lines strictly before `currentLineIndex` over total words in the file. */
 export function wordProgressPercent(
   lines: string[],
   currentLineIndex: number,
@@ -29,8 +30,12 @@ export function wordProgressPercent(
   const totalWords = lines.reduce((sum, line) => sum + countWords(line), 0);
   if (totalWords === 0) return 0;
 
+  const safeIndex = Math.min(
+    Math.max(0, Math.floor(currentLineIndex)),
+    lines.length - 1,
+  );
   const readWords = lines
-    .slice(0, Math.min(currentLineIndex + 1, lines.length))
+    .slice(0, safeIndex)
     .reduce((sum, line) => sum + countWords(line), 0);
 
   return Math.min(100, Math.round((readWords / totalWords) * 100));
@@ -42,6 +47,25 @@ export function lineIndexFromProgress(
 ): number {
   if (lineCount <= 1) return 0;
   return Math.round((progressPercent / 100) * (lineCount - 1));
+}
+
+/** Line index whose position-based progress best matches a saved percentage. */
+export function lineIndexFromWordProgress(
+  progressPercent: number,
+  lines: string[],
+): number {
+  if (lines.length === 0) return 0;
+
+  const target = Math.min(100, Math.max(0, Math.round(progressPercent)));
+  let bestIndex = 0;
+
+  for (let index = 0; index < lines.length; index++) {
+    const atIndex = wordProgressPercent(lines, index);
+    if (atIndex <= target) bestIndex = index;
+    if (atIndex >= target) return index;
+  }
+
+  return bestIndex;
 }
 
 export function totalWordsInLines(lines: string[]): number {
@@ -58,10 +82,4 @@ export function uniqueWordsRecorded(
     if (line) sum += countWords(line);
   }
   return sum;
-}
-
-export function totalRecordingAttempts(
-  attemptsByLine: Readonly<Record<number, number>>,
-): number {
-  return Object.values(attemptsByLine).reduce((sum, count) => sum + count, 0);
 }

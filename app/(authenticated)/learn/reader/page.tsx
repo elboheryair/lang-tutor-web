@@ -1,6 +1,7 @@
 import { AuthenticatedPageFallback } from "@/components/authenticated-page-fallback";
 import { ReaderView } from "@/components/learn/reader-view";
 import { requireLearningLanguage } from "@/lib/auth/learning-session";
+import { getReaderStylePreferences } from "@/lib/reader-style-preferences";
 import { getUserDocument } from "@/lib/user-documents";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -21,14 +22,27 @@ async function ReaderContent({ documentId }: { documentId: string }) {
     redirect("/learn/source");
   }
 
+  if (document.session_locked) {
+    redirect("/learn/source");
+  }
+
+  const initialStylePreferences = await getReaderStylePreferences(
+    user.id,
+    languageCode,
+  );
+
   return (
     <div className="h-full min-h-0">
       <ReaderView
+        key={document.id}
         documentId={document.id}
         title={document.title}
         content={document.content}
         initialPosition={document.last_position}
+        initialCompletionReport={document.completion_report}
         languageName={language.name}
+        languageCode={languageCode}
+        initialStylePreferences={initialStylePreferences}
       />
     </div>
   );

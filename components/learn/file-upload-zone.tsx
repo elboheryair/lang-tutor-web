@@ -3,15 +3,34 @@
 import { importDocumentFromFile } from "@/app/(authenticated)/learn/source/actions";
 import { UPLOAD_ACCEPT } from "@/lib/documents/parse-file";
 import { useRouter } from "next/navigation";
-import { FormEvent, useRef, useState, useTransition } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 export function FileUploadZone() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const clearSelection = useCallback(() => {
+    setSelectedName(null);
+    setError(null);
+    setDragActive(false);
+    formRef.current?.reset();
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+  }, []);
+
+  useEffect(() => {
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) clearSelection();
+    }
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, [clearSelection]);
 
   function openFilePicker() {
     inputRef.current?.click();
@@ -33,6 +52,7 @@ export function FileUploadZone() {
     startTransition(async () => {
       const result = await importDocumentFromFile({}, formData);
       if (result.documentId) {
+        clearSelection();
         router.push(`/learn/reader?documentId=${result.documentId}`);
         return;
       }
@@ -44,6 +64,7 @@ export function FileUploadZone() {
 
   return (
     <form
+      ref={formRef}
       encType="multipart/form-data"
       onSubmit={handleSubmit}
       className="space-y-4"

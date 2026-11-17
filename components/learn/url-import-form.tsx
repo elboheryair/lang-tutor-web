@@ -2,10 +2,11 @@
 
 import { importDocumentFromUrl } from "@/app/(authenticated)/learn/source/actions";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useRef, useState, useTransition } from "react";
 
 export function UrlImportForm() {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -23,6 +24,7 @@ export function UrlImportForm() {
     startTransition(async () => {
       const result = await importDocumentFromUrl({}, formData);
       if (result.documentId) {
+        formRef.current?.reset();
         router.push(`/learn/reader?documentId=${result.documentId}`);
         return;
       }
@@ -33,7 +35,7 @@ export function UrlImportForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label htmlFor="source-url" className="block text-sm font-medium text-zinc-300">
           Article or page URL

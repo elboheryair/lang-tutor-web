@@ -4,9 +4,14 @@ import { parseUploadedFile } from "@/lib/documents/parse-file";
 import { fetchUrlAsText } from "@/lib/documents/url-text";
 import { getProfileForUser } from "@/lib/profiles";
 import { isLearningLanguageCode } from "@/lib/languages";
-import { createUserDocument } from "@/lib/user-documents";
+import {
+  createUserDocument,
+  deleteUserDocument,
+  lockFinishedDocumentSession,
+} from "@/lib/user-documents";
 import { createClient } from "@/lib/supabase/server";
 import { connection } from "next/server";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 export type ImportActionState = {
@@ -125,4 +130,61 @@ export async function importDocumentFromUrl(
       error instanceof Error ? error.message : "Could not fetch that URL.";
     return { error: message };
   }
+}
+
+export async function deleteSavedDocument(
+  documentId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await connection();
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/");
+  }
+
+  const trimmed = documentId.trim();
+  if (!trimmed) {
+    return { ok: false, error: "Missing document." };
+  }
+
+  const result = await deleteUserDocument(user.id, trimmed);
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? "Could not delete that session." };
+  }
+
+  revalidatePath("/learn/source");
+  return { ok: true };
+}
+
+export async function lockSavedDocument(
+  documentId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await connection();
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/");
+  }
+
+  const trimmed = documentId.trim();
+  if (!trimmed) {
+    return { ok: false, error: "Missing document." };
+  }
+
+  const result = await lockFinishedDocumentSession(user.id, trimmed);
+  if (!result.ok) {
+    return result;
+  }
+
+  revalidatePath("/learn/source");
+  revalidatePath("/learn/reader");
+  return { ok: true };
 }
